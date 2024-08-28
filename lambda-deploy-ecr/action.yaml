@@ -1,0 +1,50 @@
+name: 'deploy lambda to ECR'
+description: 'Builds and deploys a lambda to ECR'
+inputs:
+  dockerfile-path:
+    description: 'Path to the Dockerfile'
+    required: true
+  docker-context-path:
+    description: 'Path to the context for the docker build'
+    required: true
+  name:
+    description: 'Name of the lambda in ECR'
+    required: true
+  govcloud:
+    description: 'Whether to deploy to GovCloud'
+    default: 'true'
+  role-name:
+    description: 'Name suffix of the role to assume (defaults to the repo name)'
+    default: ''
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+    - shell: bash
+      name: Build Docker image
+      run: docker buildx build -t "quiltdata/lambdas/${{ inputs.name }}:${{ github.sha }}" -f ${{ inputs.dockerfile-path }} ${{ inputs.docker-context-path }}
+    - shell: bash
+      name: Compute role name suffix
+      id: role-name
+      run: |
+        NAME=${{ inputs.role_name }}
+        REPO=${GITHUB_REPOSITORY#*/}
+        echo "role-name=$(echo ${NAME:-$REPO})" >> $GITHUB_OUTPUT
+    - name: Configure AWS credentials from Prod account
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-${{ steps.role-name.outputs.role-name }}
+        aws-region: us-east-1
+    - shell: bash
+      name: Push Docker image to Prod ECR
+      run: ${{ github.action_path }}/upload_ecr.sh 730278974607 "quiltdata/lambdas/${{ inputs.name }}:${{ github.sha }}"
+    - if: ${{ inputs.govcloud  == 'true' }}
+      name: Configure AWS credentials from GovCloud account
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws-us-gov:iam::313325871032:role/github/GitHub-${{ steps.role-name.outputs.role-name }}
+        aws-region: us-gov-east-1
+    - if: ${{ inputs.govcloud  == 'true' }}
+      shell: bash
+      name: Push Docker image to GovCloud ECR
+      run: ${{ github.action_path }}/upload_ecr.sh 313325871032 "quiltdata/lambdas/${{ inputs.name }}:${{ github.sha }}"
