@@ -14,6 +14,9 @@ inputs:
     description: 'Whether to deploy to GovCloud'
     required: false
     default: 'true'
+  role-name:
+    description: 'Name of the role to assume'
+    required: true
 runs:
   using: "composite"
   steps:
@@ -24,7 +27,7 @@ runs:
     - name: Configure AWS credentials from Prod account
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-Quilt
+        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-${{ inputs.role-name }}
         aws-region: us-east-1
     - shell: bash
       name: Push Docker image to Prod ECR
@@ -33,7 +36,7 @@ runs:
       name: Configure AWS credentials from GovCloud account
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws-us-gov:iam::313325871032:role/github/GitHub-Quilt
+        role-to-assume: arn:aws-us-gov:iam::313325871032:role/github/GitHub-${{ inputs.role-name }}
         aws-region: us-gov-east-1
     - if: ${{ inputs.govcloud  == 'true' }}
       shell: bash
