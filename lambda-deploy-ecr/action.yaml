@@ -12,11 +12,10 @@ inputs:
     required: true
   govcloud:
     description: 'Whether to deploy to GovCloud'
-    required: false
     default: 'true'
   role-name:
-    description: 'Name of the role to assume'
-    required: true
+    description: 'Name suffix of the role to assume (defaults to the repo name)'
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -24,10 +23,17 @@ runs:
     - shell: bash
       name: Build Docker image
       run: docker buildx build -t "quiltdata/lambdas/${{ inputs.name }}:${{ github.sha }}" -f ${{ inputs.dockerfile-path }} ${{ inputs.docker-context-path }}
+    - shell: bash
+      name: Compute role name suffix
+      id: role-name
+      run: |
+        NAME=${{ inputs.role_name }}
+        REPO=${GITHUB_REPOSITORY#*/}
+        echo "role-name=$(echo ${NAME:-$REPO})" >> $GITHUB_OUTPUT
     - name: Configure AWS credentials from Prod account
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-${{ inputs.role-name }}
+        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-${{ steps.role-name.outputs.role-name }}
         aws-region: us-east-1
     - shell: bash
       name: Push Docker image to Prod ECR
@@ -36,7 +42,7 @@ runs:
       name: Configure AWS credentials from GovCloud account
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        role-to-assume: arn:aws-us-gov:iam::313325871032:role/github/GitHub-${{ inputs.role-name }}
+        role-to-assume: arn:aws-us-gov:iam::313325871032:role/github/GitHub-${{ steps.role-name.outputs.role-name }}
         aws-region: us-gov-east-1
     - if: ${{ inputs.govcloud  == 'true' }}
       shell: bash
