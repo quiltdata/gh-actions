@@ -37,7 +37,7 @@ runs:
         aws-region: us-east-1
     - shell: bash
       name: Push Docker image to Prod ECR
-      run: ${{ github.action_path }}/upload_ecr.sh 730278974607 "quiltdata/lambdas/${{ inputs.name }}:${{ github.sha }}""
+      run: ${{ github.action_path }}/upload_ecr.sh 730278974607 "quiltdata/lambdas/${{ inputs.name }}:${{ github.sha }}"
     - if: ${{ inputs.govcloud  == 'true' }}
       name: Configure AWS credentials from GovCloud account
       uses: aws-actions/configure-aws-credentials@v4
@@ -47,4 +47,4 @@ runs:
     - if: ${{ inputs.govcloud  == 'true' }}
       shell: bash
       name: Push Docker image to GovCloud ECR
-      run: ${{ github.action_path }}/upload_ecr.sh 313325871032 "quiltdata/lambdas/${{ inputs.name }}:${{ github.sha }}""
+      run: ${{ github.action_path }}/upload_ecr.sh 313325871032 "quiltdata/lambdas/${{ inputs.name }}:${{ github.sha }}"
