@@ -7,7 +7,7 @@ error() {
     exit 1
 }
 
-[[ $# == 3 ]] || error "Usage: $0 zip_file lambda_name hash region"
+[[ $# == 4 ]] || error "Usage: $0 zip_file lambda_name hash region"
 
 zip_file=$1
 lambda_name=$2
