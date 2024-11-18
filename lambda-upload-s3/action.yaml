@@ -26,7 +26,7 @@ runs:
         [[ $size -lt $MAX_SIZE ]] || error "The package size is too large: $size; must be smaller than $MAX_SIZE. Consider using docker-based deployment."
 
         TMPNAME=$(mktemp)
-        zip -r - . > $TMPNAME
+        zip -r - ${{ inputs.path }} > $TMPNAME
 
         echo "zip-path=$TMPNAME" >> $GITHUB_OUTPUT
     - shell: bash
