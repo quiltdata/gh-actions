@@ -1,0 +1,56 @@
+name: 'upload lambda to S3'
+description: 'Zip directory and upload to S3'
+inputs:
+  path:
+    description: 'Path to the directory to zip'
+    required: true
+  name:
+    description: 'Name of the lambda'
+    required: true
+  govcloud:
+    description: 'Whether to deploy to GovCloud'
+    default: 'true'
+  role-name:
+    description: 'Name suffix of the role to assume (defaults to the repo name)'
+    default: ''
+runs:
+  using: "composite"
+  steps:
+    - shell: bash
+      name: Zip directory
+      id: zip
+      run: |
+        MAX_SIZE=262144000
+        size=$(du -b -s . | cut -f 1)
+        [[ $size -lt $MAX_SIZE ]] || error "The package size is too large: $size; must be smaller than $MAX_SIZE. Consider using docker-based deployment."
+
+        TMPNAME=$(mktemp)
+        cd ${{ inputs.path }}
+        zip -r - . > $TMPNAME
+
+        echo "zip-path=$TMPNAME" >> $GITHUB_OUTPUT
+    - shell: bash
+      name: Compute role name suffix
+      id: role-name
+      run: |
+        NAME=${{ inputs.role_name }}
+        REPO=${GITHUB_REPOSITORY#*/}
+        echo "role-name=$(echo ${NAME:-$REPO})" >> $GITHUB_OUTPUT
+    - name: Configure AWS credentials from Prod account
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-${{ steps.role-name.outputs.role-name }}
+        aws-region: us-east-1
+    - shell: bash
+      name: Upload zip to prod S3
+      run: ${{ github.action_path }}/upload_s3.sh ${{ steps.zip.outputs.zip-path }} ${{ inputs.name }} ${{ github.sha }} us-east-1
+    - if: ${{ inputs.govcloud  == 'true' }}
+      name: Configure AWS credentials from GovCloud account
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws-us-gov:iam::313325871032:role/github/GitHub-${{ steps.role-name.outputs.role-name }}
+        aws-region: us-gov-east-1
+    - if: ${{ inputs.govcloud  == 'true' }}
+      shell: bash
+      name: Upload zip to GovCloud S3
+      run: ${{ github.action_path }}/upload_s3.sh ${{ steps.zip.outputs.zip-path }} ${{ inputs.name }} ${{ github.sha }} us-gov-east-1
