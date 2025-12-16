@@ -43,7 +43,10 @@ runs:
       run: |
         NAME=${{ inputs.role-name }}
         REPO=${GITHUB_REPOSITORY#*/}
-        echo "role-name=$(echo ${NAME:-$REPO})" >> $GITHUB_OUTPUT
+        # Capitalize first letter for role name (tabulator -> Tabulator)
+        ROLE_SUFFIX=${NAME:-$REPO}
+        ROLE_SUFFIX="$(echo ${ROLE_SUFFIX:0:1} | tr '[:lower:]' '[:upper:]')${ROLE_SUFFIX:1}"
+        echo "role-name=$ROLE_SUFFIX" >> $GITHUB_OUTPUT
 
     - name: Configure AWS credentials from Staging account
       uses: aws-actions/configure-aws-credentials@v4
