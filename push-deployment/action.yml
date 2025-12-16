@@ -95,7 +95,7 @@ runs:
       shell: bash
       working-directory: deployment-repo
       run: |
-        VERSIONS_FILE="versions.csv"
+        VERSIONS_FILE="t4/template/environment/versions.csv"
         COMPONENT="${{ inputs.component-name }}"
         VERSION="${{ inputs.component-version }}"
 
