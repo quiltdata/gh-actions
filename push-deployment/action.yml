@@ -131,6 +131,13 @@ runs:
       id: push
       shell: bash
       working-directory: deployment-repo
+      env:
+        COMPONENT_NAME: ${{ inputs.component-name }}
+        COMPONENT_VERSION: ${{ inputs.component-version }}
+        SOURCE_REPO: ${{ inputs.source-repo }}
+        SOURCE_BRANCH: ${{ inputs.source-branch }}
+        PR_NUMBER: ${{ steps.find-pr.outputs.pr-number }}
+        TARGET_BRANCH: ${{ steps.find-pr.outputs.target-branch }}
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -144,18 +151,18 @@ runs:
           exit 0
         fi
 
-        COMMIT_MSG="Deploy ${{ inputs.component-name }}@${{ inputs.component-version }}
+        # Create commit message with proper line breaks
+        printf "Deploy %s@%s\n\nTriggered by: %s@%s\nPR: #%s\nTag: %s\n" \
+          "${COMPONENT_NAME}" "${COMPONENT_VERSION}" \
+          "${SOURCE_REPO}" "${SOURCE_BRANCH}" \
+          "${PR_NUMBER}" "${COMPONENT_VERSION}" > /tmp/commit-msg.txt
 
-Triggered by: ${{ inputs.source-repo }}@${{ inputs.source-branch }}
-PR: #${{ steps.find-pr.outputs.pr-number }}
-Tag: ${{ inputs.component-version }}"
-
-        git commit -m "$COMMIT_MSG"
-        git push origin ${{ steps.find-pr.outputs.target-branch }}
+        git commit -F /tmp/commit-msg.txt
+        git push origin "$TARGET_BRANCH"
 
         COMMIT_SHA=$(git rev-parse HEAD)
         echo "commit-sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
         echo "deployed=true" >> $GITHUB_OUTPUT
 
-        echo "Successfully pushed to ${{ steps.find-pr.outputs.target-branch }}"
+        echo "Successfully pushed to $TARGET_BRANCH"
         echo "Commit: $COMMIT_SHA"
