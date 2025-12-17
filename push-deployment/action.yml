@@ -108,13 +108,12 @@ runs:
 
         # Check if component exists in CSV
         if grep -q "^$COMPONENT," "$VERSIONS_FILE"; then
-          # Update existing component
-          # Use sed with different syntax for macOS vs Linux
-          if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s/^$COMPONENT,.*/$COMPONENT,$VERSION/" "$VERSIONS_FILE"
-          else
-            sed -i "s/^$COMPONENT,.*/$COMPONENT,$VERSION/" "$VERSIONS_FILE"
-          fi
+          # Update existing component - only change the version field (column 2)
+          # Use awk to preserve all other CSV fields
+          awk -v comp="$COMPONENT" -v ver="$VERSION" 'BEGIN {FS=OFS=","}
+            $1 == comp {$2 = ver}
+            {print}' "$VERSIONS_FILE" > "$VERSIONS_FILE.tmp"
+          mv "$VERSIONS_FILE.tmp" "$VERSIONS_FILE"
           echo "Updated existing component"
         else
           # Add new component
