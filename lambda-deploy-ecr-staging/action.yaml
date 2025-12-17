@@ -1,0 +1,65 @@
+name: 'deploy lambda to staging ECR'
+description: 'Builds and deploys a lambda to staging ECR for testing'
+inputs:
+  dockerfile-path:
+    description: 'Path to the Dockerfile'
+    required: true
+  docker-context-path:
+    description: 'Path to the context for the docker build'
+    required: true
+  name:
+    description: 'Name of the lambda in ECR'
+    required: true
+  image-tag:
+    description: 'Tag for the Docker image (typically the dev tag name)'
+    required: true
+  staging-account-id:
+    description: 'AWS account ID for staging (defaults to 712023778557)'
+    default: '712023778557'
+  role-name:
+    description: 'Name suffix of the role to assume (defaults to the repo name)'
+    default: ''
+  regions:
+    description: 'Comma-separated list of AWS regions to push to (default: us-east-1 only)'
+    default: 'us-east-1'
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+
+    - shell: bash
+      name: Build Docker image
+      run: |
+        docker buildx build \
+          --platform=linux/amd64 \
+          --cache-from type=gha \
+          --cache-to type=gha,mode=max \
+          -t "quiltdata/lambdas/${{ inputs.name }}:${{ inputs.image-tag }}" \
+          -f ${{ inputs.dockerfile-path }} \
+          ${{ inputs.docker-context-path }}
+
+    - shell: bash
+      name: Compute role name suffix
+      id: role-name
+      run: |
+        NAME=${{ inputs.role-name }}
+        REPO=${GITHUB_REPOSITORY#*/}
+        # Capitalize first letter for role name (tabulator -> Tabulator)
+        ROLE_SUFFIX=${NAME:-$REPO}
+        ROLE_SUFFIX="$(echo ${ROLE_SUFFIX:0:1} | tr '[:lower:]' '[:upper:]')${ROLE_SUFFIX:1}"
+        echo "role-name=$ROLE_SUFFIX" >> $GITHUB_OUTPUT
+
+    - name: Configure AWS credentials from Staging account
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::${{ inputs.staging-account-id }}:role/github/GitHub-Testing-${{ steps.role-name.outputs.role-name }}
+        aws-region: us-east-1
+
+    - shell: bash
+      name: Push Docker image to Staging ECR
+      run: |
+        ${{ github.action_path }}/upload_ecr_staging.sh \
+          ${{ inputs.staging-account-id }} \
+          "quiltdata/lambdas/${{ inputs.name }}:${{ inputs.image-tag }}" \
+          "${{ inputs.regions }}"

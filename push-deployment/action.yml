@@ -1,0 +1,167 @@
+name: 'Push to Deployment Repository'
+description: 'Updates deployment repository versions.csv and pushes directly to target branch'
+inputs:
+  github-token:
+    description: 'GitHub token with repo access'
+    required: true
+  deployment-repo:
+    description: 'Deployment repository (e.g., quiltdata/deployment)'
+    required: true
+  component-name:
+    description: 'Component name in versions.csv (e.g., tabulator)'
+    required: true
+  component-version:
+    description: 'Version to set (e.g., dev-test-1)'
+    required: true
+  source-repo:
+    description: 'Source repository (e.g., quiltdata/tabulator)'
+    required: true
+  source-branch:
+    description: 'Source branch name'
+    required: true
+
+outputs:
+  deployed:
+    description: 'Whether deployment was pushed (true/false)'
+    value: ${{ steps.push.outputs.deployed }}
+  target-branch:
+    description: 'Target deployment branch that was updated'
+    value: ${{ steps.find-pr.outputs.target-branch }}
+  commit-sha:
+    description: 'Commit SHA of the deployment update'
+    value: ${{ steps.push.outputs.commit-sha }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Find PR by branch name
+      id: find-pr
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        echo "Looking for PR from branch: ${{ inputs.source-branch }}"
+
+        # Find open PR for this branch
+        PR_DATA=$(gh pr list \
+          --repo "${{ inputs.source-repo }}" \
+          --head "${{ inputs.source-branch }}" \
+          --state open \
+          --json number,labels,title \
+          --limit 1)
+
+        if [ "$PR_DATA" == "[]" ]; then
+          echo "No open PR found for branch ${{ inputs.source-branch }}"
+          echo "deployed=false" >> $GITHUB_OUTPUT
+          echo "target-branch=" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Extract PR number and labels
+        PR_NUMBER=$(echo "$PR_DATA" | jq -r '.[0].number')
+        echo "Found PR #$PR_NUMBER"
+
+        # Look for deploy: label
+        DEPLOY_LABEL=$(echo "$PR_DATA" | jq -r '.[0].labels[] | select(.name | startswith("deploy:")) | .name')
+
+        if [ -z "$DEPLOY_LABEL" ]; then
+          echo "No deploy: label found on PR #$PR_NUMBER"
+          echo "deployed=false" >> $GITHUB_OUTPUT
+          echo "target-branch=" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Extract target branch from label (format: deploy:branch-name)
+        TARGET_BRANCH="${DEPLOY_LABEL#deploy:}"
+        echo "Found deployment label: $DEPLOY_LABEL"
+        echo "Target branch: $TARGET_BRANCH"
+
+        echo "deployed=true" >> $GITHUB_OUTPUT
+        echo "target-branch=$TARGET_BRANCH" >> $GITHUB_OUTPUT
+        echo "pr-number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+    - name: Checkout deployment repository
+      if: steps.find-pr.outputs.deployed == 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.deployment-repo }}
+        ref: ${{ steps.find-pr.outputs.target-branch }}
+        token: ${{ inputs.github-token }}
+        path: deployment-repo
+
+    - name: Update versions.csv
+      if: steps.find-pr.outputs.deployed == 'true'
+      id: update
+      shell: bash
+      working-directory: deployment-repo
+      run: |
+        VERSIONS_FILE="t4/template/environment/versions.csv"
+        COMPONENT="${{ inputs.component-name }}"
+        VERSION="${{ inputs.component-version }}"
+
+        if [ ! -f "$VERSIONS_FILE" ]; then
+          echo "Error: $VERSIONS_FILE not found in deployment repository"
+          exit 1
+        fi
+
+        echo "Updating $COMPONENT to version $VERSION"
+
+        # Check if component exists in CSV
+        if grep -q "^$COMPONENT," "$VERSIONS_FILE"; then
+          # Update existing component - only change the version field (column 2)
+          # Use awk to preserve all other CSV fields
+          awk -v comp="$COMPONENT" -v ver="$VERSION" 'BEGIN {FS=OFS=","}
+            $1 == comp {$2 = ver}
+            {print}' "$VERSIONS_FILE" > "$VERSIONS_FILE.tmp"
+          mv "$VERSIONS_FILE.tmp" "$VERSIONS_FILE"
+          echo "Updated existing component"
+        else
+          # Add new component
+          echo "$COMPONENT,$VERSION" >> "$VERSIONS_FILE"
+          echo "Added new component"
+        fi
+
+        # Show the change
+        echo "Updated versions.csv:"
+        grep "^$COMPONENT," "$VERSIONS_FILE"
+
+    - name: Commit and push
+      if: steps.find-pr.outputs.deployed == 'true'
+      id: push
+      shell: bash
+      working-directory: deployment-repo
+      env:
+        COMPONENT_NAME: ${{ inputs.component-name }}
+        COMPONENT_VERSION: ${{ inputs.component-version }}
+        SOURCE_REPO: ${{ inputs.source-repo }}
+        SOURCE_BRANCH: ${{ inputs.source-branch }}
+        PR_NUMBER: ${{ steps.find-pr.outputs.pr-number }}
+        TARGET_BRANCH: ${{ steps.find-pr.outputs.target-branch }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        git add t4/template/environment/versions.csv
+
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "No changes to commit (version already up to date)"
+          echo "deployed=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Create commit message with proper line breaks
+        printf "Deploy %s@%s\n\nTriggered by: %s@%s\nPR: #%s\nTag: %s\n" \
+          "${COMPONENT_NAME}" "${COMPONENT_VERSION}" \
+          "${SOURCE_REPO}" "${SOURCE_BRANCH}" \
+          "${PR_NUMBER}" "${COMPONENT_VERSION}" > /tmp/commit-msg.txt
+
+        git commit -F /tmp/commit-msg.txt
+        git push origin "$TARGET_BRANCH"
+
+        COMMIT_SHA=$(git rev-parse HEAD)
+        echo "commit-sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+        echo "deployed=true" >> $GITHUB_OUTPUT
+
+        echo "Successfully pushed to $TARGET_BRANCH"
+        echo "Commit: $COMMIT_SHA"
