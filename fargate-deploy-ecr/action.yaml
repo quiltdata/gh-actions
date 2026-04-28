@@ -21,11 +21,11 @@ inputs:
     description: 'IAM role suffix; defaults to the repo name. Full role: GitHub-<role-name>.'
     default: ''
   service-name:
-    description: 'ECS service name (required when push-targets is non-empty)'
-    required: true
+    description: 'ECS service name. Required when push-targets is non-empty; ignored otherwise.'
+    default: ''
   cluster-name:
-    description: 'ECS cluster name (required when push-targets is non-empty)'
-    required: true
+    description: 'ECS cluster name. Required when push-targets is non-empty; ignored otherwise.'
+    default: ''
 
 outputs:
   image-uri-prod:
@@ -38,21 +38,38 @@ outputs:
 runs:
   using: composite
   steps:
+    # All shell steps reference inputs via env vars rather than ${{ }} template
+    # interpolation, per GitHub's security hardening guide:
+    # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
+    - name: Validate inputs
+      if: fromJSON(inputs.push-targets)[0] != null && (inputs.service-name == '' || inputs.cluster-name == '')
+      shell: bash
+      run: |
+        echo "::error::service-name and cluster-name are required when push-targets is non-empty"
+        exit 1
+
     - name: Resolve role name
       id: cfg
       shell: bash
+      env:
+        ROLE_NAME_INPUT: ${{ inputs.role-name }}
       run: |
-        NAME='${{ inputs.role-name }}'
+        NAME="$ROLE_NAME_INPUT"
         [ -z "$NAME" ] && NAME=${GITHUB_REPOSITORY#*/}
         echo "role-name=$NAME" >> "$GITHUB_OUTPUT"
 
     - name: Build Docker image
       shell: bash
+      env:
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
+        DOCKER_CONTEXT_PATH: ${{ inputs.docker-context-path }}
       run: |
         docker buildx build --load \
-          -t "${{ inputs.image-name }}:${{ inputs.image-tag }}" \
-          -f "${{ inputs.dockerfile-path }}" \
-          "${{ inputs.docker-context-path }}"
+          -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+          -f "$DOCKERFILE_PATH" \
+          "$DOCKER_CONTEXT_PATH"
 
     # ----- Prod -----
     - if: contains(fromJSON(inputs.push-targets), 'prod')
@@ -73,22 +90,29 @@ runs:
       shell: bash
       env:
         REGISTRY: ${{ steps.ecr-prod.outputs.registry }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
-        URI="$REGISTRY/${{ inputs.image-name }}:${{ inputs.image-tag }}"
-        docker tag "${{ inputs.image-name }}:${{ inputs.image-tag }}" "$URI"
+        URI="$REGISTRY/${IMAGE_NAME}:${IMAGE_TAG}"
+        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "$URI"
         docker push "$URI"
         echo "uri=$URI" >> "$GITHUB_OUTPUT"
 
     - if: contains(fromJSON(inputs.push-targets), 'prod')
       name: Update Fargate service (Prod)
       shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster-name }}
+        SERVICE_NAME: ${{ inputs.service-name }}
       run: |
         aws ecs update-service \
-          --cluster "${{ inputs.cluster-name }}" \
-          --service "${{ inputs.service-name }}" \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME" \
           --force-new-deployment \
-          --no-cli-pager \
-          > /dev/null
+          --no-cli-pager
+        aws ecs wait services-stable \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME"
 
     # ----- GovCloud -----
     - if: contains(fromJSON(inputs.push-targets), 'govcloud')
@@ -109,19 +133,26 @@ runs:
       shell: bash
       env:
         REGISTRY: ${{ steps.ecr-govcloud.outputs.registry }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
-        URI="$REGISTRY/${{ inputs.image-name }}:${{ inputs.image-tag }}"
-        docker tag "${{ inputs.image-name }}:${{ inputs.image-tag }}" "$URI"
+        URI="$REGISTRY/${IMAGE_NAME}:${IMAGE_TAG}"
+        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "$URI"
         docker push "$URI"
         echo "uri=$URI" >> "$GITHUB_OUTPUT"
 
     - if: contains(fromJSON(inputs.push-targets), 'govcloud')
       name: Update Fargate service (GovCloud)
       shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster-name }}
+        SERVICE_NAME: ${{ inputs.service-name }}
       run: |
         aws ecs update-service \
-          --cluster "${{ inputs.cluster-name }}" \
-          --service "${{ inputs.service-name }}" \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME" \
           --force-new-deployment \
-          --no-cli-pager \
-          > /dev/null
+          --no-cli-pager
+        aws ecs wait services-stable \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME"

@@ -38,21 +38,31 @@ outputs:
 runs:
   using: composite
   steps:
+    # All shell steps reference inputs via env vars rather than ${{ }} template
+    # interpolation, per GitHub's security hardening guide:
+    # https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable
     - name: Resolve role name
       id: cfg
       shell: bash
+      env:
+        ROLE_NAME_INPUT: ${{ inputs.role-name }}
       run: |
-        NAME='${{ inputs.role-name }}'
+        NAME="$ROLE_NAME_INPUT"
         [ -z "$NAME" ] && NAME=${GITHUB_REPOSITORY#*/}
         echo "role-name=$NAME" >> "$GITHUB_OUTPUT"
 
     - name: Build Docker image
       shell: bash
+      env:
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        DOCKERFILE_PATH: ${{ inputs.dockerfile-path }}
+        DOCKER_CONTEXT_PATH: ${{ inputs.docker-context-path }}
       run: |
         docker buildx build --load \
-          -t "${{ inputs.image-name }}:${{ inputs.image-tag }}" \
-          -f "${{ inputs.dockerfile-path }}" \
-          "${{ inputs.docker-context-path }}"
+          -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+          -f "$DOCKERFILE_PATH" \
+          "$DOCKER_CONTEXT_PATH"
 
     # ----- Prod / Marketplace path (both authenticate via the Prod IAM role) -----
     - if: contains(fromJSON(inputs.push-targets), 'prod') || contains(fromJSON(inputs.push-targets), 'mp')
@@ -73,9 +83,11 @@ runs:
       shell: bash
       env:
         REGISTRY: ${{ steps.ecr-prod.outputs.registry }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
-        URI="$REGISTRY/${{ inputs.image-name }}:${{ inputs.image-tag }}"
-        docker tag "${{ inputs.image-name }}:${{ inputs.image-tag }}" "$URI"
+        URI="$REGISTRY/${IMAGE_NAME}:${IMAGE_TAG}"
+        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "$URI"
         docker push "$URI"
         echo "uri=$URI" >> "$GITHUB_OUTPUT"
 
@@ -92,10 +104,12 @@ runs:
       shell: bash
       env:
         REGISTRY: ${{ steps.ecr-mp.outputs.registry }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
         MP_NAME: ${{ inputs.mp-image-name || inputs.image-name }}
       run: |
-        URI="$REGISTRY/$MP_NAME:${{ inputs.image-tag }}"
-        docker tag "${{ inputs.image-name }}:${{ inputs.image-tag }}" "$URI"
+        URI="$REGISTRY/${MP_NAME}:${IMAGE_TAG}"
+        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "$URI"
         docker push "$URI"
         echo "uri=$URI" >> "$GITHUB_OUTPUT"
 
@@ -118,8 +132,10 @@ runs:
       shell: bash
       env:
         REGISTRY: ${{ steps.ecr-govcloud.outputs.registry }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
-        URI="$REGISTRY/${{ inputs.image-name }}:${{ inputs.image-tag }}"
-        docker tag "${{ inputs.image-name }}:${{ inputs.image-tag }}" "$URI"
+        URI="$REGISTRY/${IMAGE_NAME}:${IMAGE_TAG}"
+        docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "$URI"
         docker push "$URI"
         echo "uri=$URI" >> "$GITHUB_OUTPUT"
