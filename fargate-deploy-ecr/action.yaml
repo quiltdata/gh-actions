@@ -1,0 +1,127 @@
+name: 'Deploy to Fargate'
+description: 'Build a Docker image, push to selected ECR targets (Prod / GovCloud), and force a new ECS service deployment in each target. Caller is responsible for actions/checkout.'
+
+inputs:
+  dockerfile-path:
+    description: 'Path to the Dockerfile (relative to the workflow workspace)'
+    default: 'Dockerfile'
+  docker-context-path:
+    description: 'Docker build context'
+    default: '.'
+  image-name:
+    description: 'ECR image repository path (e.g. quiltdata/services/foo)'
+    required: true
+  image-tag:
+    description: 'Image tag'
+    default: ${{ github.sha }}
+  push-targets:
+    description: 'JSON array, subset of ["prod","govcloud"]. [] = build only, no push, no deploy.'
+    default: '["prod","govcloud"]'
+  role-name:
+    description: 'IAM role suffix; defaults to the repo name. Full role: GitHub-<role-name>.'
+    default: ''
+  service-name:
+    description: 'ECS service name (required when push-targets is non-empty)'
+    required: true
+  cluster-name:
+    description: 'ECS cluster name (required when push-targets is non-empty)'
+    required: true
+
+outputs:
+  image-uri-prod:
+    description: 'Full image URI in Prod ECR (empty if prod not pushed)'
+    value: ${{ steps.push-prod.outputs.uri }}
+  image-uri-govcloud:
+    description: 'Full image URI in GovCloud ECR (empty if govcloud not pushed)'
+    value: ${{ steps.push-govcloud.outputs.uri }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve role name
+      id: cfg
+      shell: bash
+      run: |
+        NAME='${{ inputs.role-name }}'
+        [ -z "$NAME" ] && NAME=${GITHUB_REPOSITORY#*/}
+        echo "role-name=$NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Build Docker image
+      shell: bash
+      run: |
+        docker buildx build --load \
+          -t "${{ inputs.image-name }}:${{ inputs.image-tag }}" \
+          -f "${{ inputs.dockerfile-path }}" \
+          "${{ inputs.docker-context-path }}"
+
+    # ----- Prod -----
+    - if: contains(fromJSON(inputs.push-targets), 'prod')
+      name: Configure AWS credentials (Prod)
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-${{ steps.cfg.outputs.role-name }}
+        aws-region: us-east-1
+
+    - if: contains(fromJSON(inputs.push-targets), 'prod')
+      name: Login to Prod ECR
+      id: ecr-prod
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - if: contains(fromJSON(inputs.push-targets), 'prod')
+      name: Push to Prod ECR
+      id: push-prod
+      shell: bash
+      env:
+        REGISTRY: ${{ steps.ecr-prod.outputs.registry }}
+      run: |
+        URI="$REGISTRY/${{ inputs.image-name }}:${{ inputs.image-tag }}"
+        docker tag "${{ inputs.image-name }}:${{ inputs.image-tag }}" "$URI"
+        docker push "$URI"
+        echo "uri=$URI" >> "$GITHUB_OUTPUT"
+
+    - if: contains(fromJSON(inputs.push-targets), 'prod')
+      name: Update Fargate service (Prod)
+      shell: bash
+      run: |
+        aws ecs update-service \
+          --cluster "${{ inputs.cluster-name }}" \
+          --service "${{ inputs.service-name }}" \
+          --force-new-deployment \
+          --no-cli-pager \
+          > /dev/null
+
+    # ----- GovCloud -----
+    - if: contains(fromJSON(inputs.push-targets), 'govcloud')
+      name: Configure AWS credentials (GovCloud)
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws-us-gov:iam::313325871032:role/github/GitHub-${{ steps.cfg.outputs.role-name }}
+        aws-region: us-gov-east-1
+
+    - if: contains(fromJSON(inputs.push-targets), 'govcloud')
+      name: Login to GovCloud ECR
+      id: ecr-govcloud
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - if: contains(fromJSON(inputs.push-targets), 'govcloud')
+      name: Push to GovCloud ECR
+      id: push-govcloud
+      shell: bash
+      env:
+        REGISTRY: ${{ steps.ecr-govcloud.outputs.registry }}
+      run: |
+        URI="$REGISTRY/${{ inputs.image-name }}:${{ inputs.image-tag }}"
+        docker tag "${{ inputs.image-name }}:${{ inputs.image-tag }}" "$URI"
+        docker push "$URI"
+        echo "uri=$URI" >> "$GITHUB_OUTPUT"
+
+    - if: contains(fromJSON(inputs.push-targets), 'govcloud')
+      name: Update Fargate service (GovCloud)
+      shell: bash
+      run: |
+        aws ecs update-service \
+          --cluster "${{ inputs.cluster-name }}" \
+          --service "${{ inputs.service-name }}" \
+          --force-new-deployment \
+          --no-cli-pager \
+          > /dev/null
