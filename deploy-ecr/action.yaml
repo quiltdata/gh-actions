@@ -1,0 +1,205 @@
+---
+# yamllint disable rule:line-length
+name: 'Deploy ECR image'
+description: 'Build a Docker image, push to selected ECR targets, and optionally force ECS service deployments.'
+
+inputs:
+  dockerfile_path:
+    description: 'Path to the Dockerfile, relative to the workflow workspace.'
+    default: 'Dockerfile'
+  docker_context_path:
+    description: 'Docker build context.'
+    default: '.'
+  image_name:
+    description: 'ECR repository path, e.g. quiltdata/catalog or quiltdata/services/foo.'
+    required: true
+  image_tag:
+    description: 'Image tag. Empty resolves to git rev-parse HEAD after caller checkout.'
+    default: ''
+  mp_image_name:
+    description: 'Override image_name for the mp target, e.g. quilt-data/quilt-payg-catalog.'
+    default: ''
+  push_targets:
+    description: 'JSON array, subset of ["prod","mp","govcloud"]. [] = build only.'
+    default: '["prod","govcloud"]'
+  multi_region:
+    description: 'If true, push to every enabled region in each target account.'
+    default: 'false'
+  role_name:
+    description: 'IAM role suffix; defaults to the caller repo name. Full role: GitHub-<role_name>.'
+    default: ''
+  cluster_name:
+    description: 'ECS cluster. If set with service_name, deploys to pushed prod/govcloud targets. mp is push-only.'
+    default: ''
+  service_name:
+    description: 'ECS service. If set with cluster_name, deploys to pushed prod/govcloud targets. mp is push-only.'
+    default: ''
+
+outputs:
+  image_tag:
+    description: 'The tag actually used.'
+    value: ${{ steps.resolve_tag.outputs.value }}
+  image_uri_prod:
+    description: 'Full image URI in Prod ECR, empty if prod was not pushed.'
+    value: ${{ steps.push_prod.outputs.uri }}
+  image_uri_mp:
+    description: 'Full image URI in Marketplace ECR, empty if mp was not pushed.'
+    value: ${{ steps.push_mp.outputs.uri }}
+  image_uri_govcloud:
+    description: 'Full image URI in GovCloud ECR, empty if govcloud was not pushed.'
+    value: ${{ steps.push_govcloud.outputs.uri }}
+
+runs:
+  using: composite
+  steps:
+    # All shell steps reference inputs via env vars rather than direct
+    # expression interpolation, per GitHub's security hardening guide.
+    - name: Warn if ECS inputs have no deployable target
+      if: inputs.cluster_name != '' || inputs.service_name != ''
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+        SERVICE_NAME: ${{ inputs.service_name }}
+        PUSH_TARGETS: ${{ inputs.push_targets }}
+      run: |
+        if [ -z "$CLUSTER_NAME" ] || [ -z "$SERVICE_NAME" ]; then
+          echo "::warning::Both cluster_name and service_name are required for ECS deployment; ECS update will be skipped."
+        elif ! echo "$PUSH_TARGETS" | grep -qE '"(prod|govcloud)"'; then
+          echo "::warning::cluster_name/service_name were set, but push_targets contains no deployable target (prod or govcloud); ECS update will be skipped."
+        fi
+
+    - name: Resolve image tag
+      id: resolve_tag
+      shell: bash
+      env:
+        TAG_INPUT: ${{ inputs.image_tag }}
+      run: |
+        TAG="$TAG_INPUT"
+        [ -z "$TAG" ] && TAG="$(git rev-parse HEAD)"
+        echo "value=$TAG" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve role name
+      id: cfg
+      shell: bash
+      env:
+        ROLE_NAME_INPUT: ${{ inputs.role_name }}
+      run: |
+        NAME="$ROLE_NAME_INPUT"
+        [ -z "$NAME" ] && NAME="${GITHUB_REPOSITORY#*/}"
+        echo "role_name=$NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Build Docker image
+      shell: bash
+      env:
+        IMAGE_NAME: ${{ inputs.image_name }}
+        IMAGE_TAG: ${{ steps.resolve_tag.outputs.value }}
+        DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
+        DOCKER_CONTEXT_PATH: ${{ inputs.docker_context_path }}
+      run: |
+        docker buildx build --load \
+          -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+          -f "$DOCKERFILE_PATH" \
+          "$DOCKER_CONTEXT_PATH"
+
+    # ----- Prod / Marketplace path (both authenticate via the Prod IAM role) -----
+    - if: contains(fromJSON(inputs.push_targets), 'prod') || contains(fromJSON(inputs.push_targets), 'mp')
+      name: Configure AWS credentials (Prod)
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-${{ steps.cfg.outputs.role_name }}
+        aws-region: us-east-1
+
+    - if: contains(fromJSON(inputs.push_targets), 'prod')
+      name: Login to Prod ECR
+      id: ecr_prod
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - if: contains(fromJSON(inputs.push_targets), 'prod')
+      name: Push to Prod ECR
+      id: push_prod
+      shell: bash
+      env:
+        TARGET: prod
+        REGISTRY: ${{ steps.ecr_prod.outputs.registry }}
+        IMAGE_NAME: ${{ inputs.image_name }}
+        IMAGE_TAG: ${{ steps.resolve_tag.outputs.value }}
+        MULTI_REGION: ${{ inputs.multi_region }}
+      run: ${{ github.action_path }}/push_target.sh
+
+    - if: contains(fromJSON(inputs.push_targets), 'prod') && inputs.cluster_name != '' && inputs.service_name != ''
+      name: Update Fargate service (Prod)
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+        SERVICE_NAME: ${{ inputs.service_name }}
+      run: |
+        aws ecs update-service \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME" \
+          --force-new-deployment \
+          --no-cli-pager
+        aws ecs wait services-stable \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME"
+
+    # ----- Marketplace is a distribution registry, not a deploy target. -----
+    - if: contains(fromJSON(inputs.push_targets), 'mp')
+      name: Login to Marketplace ECR
+      id: ecr_mp
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        registries: '709825985650'
+
+    - if: contains(fromJSON(inputs.push_targets), 'mp')
+      name: Push to Marketplace ECR
+      id: push_mp
+      shell: bash
+      env:
+        TARGET: mp
+        REGISTRY: ${{ steps.ecr_mp.outputs.registry }}
+        IMAGE_NAME: ${{ inputs.mp_image_name || inputs.image_name }}
+        SOURCE_IMAGE: ${{ inputs.image_name }}:${{ steps.resolve_tag.outputs.value }}
+        IMAGE_TAG: ${{ steps.resolve_tag.outputs.value }}
+        MULTI_REGION: 'false'
+      run: ${{ github.action_path }}/push_target.sh
+
+    # ----- GovCloud path -----
+    - if: contains(fromJSON(inputs.push_targets), 'govcloud')
+      name: Configure AWS credentials (GovCloud)
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        role-to-assume: arn:aws-us-gov:iam::313325871032:role/github/GitHub-${{ steps.cfg.outputs.role_name }}
+        aws-region: us-gov-east-1
+
+    - if: contains(fromJSON(inputs.push_targets), 'govcloud')
+      name: Login to GovCloud ECR
+      id: ecr_govcloud
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - if: contains(fromJSON(inputs.push_targets), 'govcloud')
+      name: Push to GovCloud ECR
+      id: push_govcloud
+      shell: bash
+      env:
+        TARGET: govcloud
+        REGISTRY: ${{ steps.ecr_govcloud.outputs.registry }}
+        IMAGE_NAME: ${{ inputs.image_name }}
+        IMAGE_TAG: ${{ steps.resolve_tag.outputs.value }}
+        MULTI_REGION: ${{ inputs.multi_region }}
+      run: ${{ github.action_path }}/push_target.sh
+
+    - if: contains(fromJSON(inputs.push_targets), 'govcloud') && inputs.cluster_name != '' && inputs.service_name != ''
+      name: Update Fargate service (GovCloud)
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+        SERVICE_NAME: ${{ inputs.service_name }}
+      run: |
+        aws ecs update-service \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME" \
+          --force-new-deployment \
+          --no-cli-pager
+        aws ecs wait services-stable \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME"
