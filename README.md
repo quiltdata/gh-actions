@@ -47,6 +47,22 @@ pushed `prod` and `govcloud` targets only.
 For Lambda-style image fanout, set `multi_region: 'true'` to push to every
 enabled region in each selected target account.
 
+Use `additional_tags` when a workflow must preserve extra tags such as
+`latest`:
+
+```yaml
+    additional_tags: '["latest"]'
+```
+
+Use `docker_platform` and `build_args` when a workflow already pins build
+architecture or embeds build metadata:
+
+```yaml
+    docker_platform: linux/amd64
+    build_args: |
+      VERSION=${{ steps.git.outputs.sha }}
+```
+
 ## Conventions
 
 - All ECR-pushing actions assume the consumer repo has an IAM role at

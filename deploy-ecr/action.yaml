@@ -10,12 +10,21 @@ inputs:
   docker_context_path:
     description: 'Docker build context.'
     default: '.'
+  docker_platform:
+    description: 'Optional docker buildx platform, e.g. linux/amd64.'
+    default: ''
+  build_args:
+    description: 'Optional newline-delimited Docker build args, e.g. VERSION=abc123.'
+    default: ''
   image_name:
     description: 'ECR repository path, e.g. quiltdata/catalog or quiltdata/services/foo.'
     required: true
   image_tag:
     description: 'Image tag. Empty resolves to git rev-parse HEAD after caller checkout.'
     default: ''
+  additional_tags:
+    description: 'JSON array of additional tags to push for the same image, e.g. ["latest"].'
+    default: '[]'
   mp_image_name:
     description: 'Override image_name for the mp target, e.g. quilt-data/quilt-payg-catalog.'
     default: ''
@@ -95,11 +104,20 @@ runs:
         IMAGE_TAG: ${{ steps.resolve_tag.outputs.value }}
         DOCKERFILE_PATH: ${{ inputs.dockerfile_path }}
         DOCKER_CONTEXT_PATH: ${{ inputs.docker_context_path }}
+        DOCKER_PLATFORM: ${{ inputs.docker_platform }}
+        BUILD_ARGS: ${{ inputs.build_args }}
       run: |
-        docker buildx build --load \
-          -t "${IMAGE_NAME}:${IMAGE_TAG}" \
-          -f "$DOCKERFILE_PATH" \
-          "$DOCKER_CONTEXT_PATH"
+        cmd=(docker buildx build --load)
+        if [ -n "$DOCKER_PLATFORM" ]; then
+          cmd+=(--platform "$DOCKER_PLATFORM")
+        fi
+        while IFS= read -r build_arg; do
+          if [ -n "$build_arg" ]; then
+            cmd+=(--build-arg "$build_arg")
+          fi
+        done <<< "$BUILD_ARGS"
+        cmd+=(-t "${IMAGE_NAME}:${IMAGE_TAG}" -f "$DOCKERFILE_PATH" "$DOCKER_CONTEXT_PATH")
+        "${cmd[@]}"
 
     # ----- Prod / Marketplace path (both authenticate via the Prod IAM role) -----
     - if: contains(fromJSON(inputs.push_targets), 'prod') || contains(fromJSON(inputs.push_targets), 'mp')
@@ -123,6 +141,7 @@ runs:
         REGISTRY: ${{ steps.ecr_prod.outputs.registry }}
         IMAGE_NAME: ${{ inputs.image_name }}
         IMAGE_TAG: ${{ steps.resolve_tag.outputs.value }}
+        ADDITIONAL_TAGS: ${{ inputs.additional_tags }}
         MULTI_REGION: ${{ inputs.multi_region }}
       run: ${{ github.action_path }}/push_target.sh
 
@@ -160,6 +179,7 @@ runs:
         IMAGE_NAME: ${{ inputs.mp_image_name || inputs.image_name }}
         SOURCE_IMAGE: ${{ inputs.image_name }}:${{ steps.resolve_tag.outputs.value }}
         IMAGE_TAG: ${{ steps.resolve_tag.outputs.value }}
+        ADDITIONAL_TAGS: ${{ inputs.additional_tags }}
         MULTI_REGION: 'false'
       run: ${{ github.action_path }}/push_target.sh
 
@@ -185,6 +205,7 @@ runs:
         REGISTRY: ${{ steps.ecr_govcloud.outputs.registry }}
         IMAGE_NAME: ${{ inputs.image_name }}
         IMAGE_TAG: ${{ steps.resolve_tag.outputs.value }}
+        ADDITIONAL_TAGS: ${{ inputs.additional_tags }}
         MULTI_REGION: ${{ inputs.multi_region }}
       run: ${{ github.action_path }}/push_target.sh
 
