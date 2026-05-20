@@ -14,7 +14,7 @@ inputs:
     description: 'Name suffix of the role to assume (defaults to the repo name)'
     default: ''
   tag-prefix:
-    description: 'Prepended to the SHA-based S3 key (e.g. "dev-" yields "dev-<sha>.zip"). Empty means key is just <sha>.zip.'
+    description: 'Prepended to the SHA-based S3 key (e.g. "dev-" yields "dev-<sha>.zip"). Empty means key is just <sha>.zip. Restricted to [A-Za-z0-9._-]* to keep the prefix in the filename segment.'
     default: ''
 runs:
   using: "composite"
@@ -57,7 +57,8 @@ runs:
       env:
         LAMBDA_NAME: ${{ inputs.name }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
-      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "${{ github.sha }}" us-east-1 "$TAG_PREFIX"
+        SHA: ${{ github.sha }}
+      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "$SHA" us-east-1 "$TAG_PREFIX"
     - if: ${{ inputs.govcloud  == 'true' }}
       name: Configure AWS credentials from GovCloud account
       uses: aws-actions/configure-aws-credentials@v4
@@ -70,4 +71,5 @@ runs:
       env:
         LAMBDA_NAME: ${{ inputs.name }}
         TAG_PREFIX: ${{ inputs.tag-prefix }}
-      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "${{ github.sha }}" us-gov-east-1 "$TAG_PREFIX"
+        SHA: ${{ github.sha }}
+      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "$SHA" us-gov-east-1 "$TAG_PREFIX"
