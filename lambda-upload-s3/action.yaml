@@ -17,11 +17,23 @@ inputs:
     description: 'Prepended to the SHA in the S3 key (e.g. "dev-" yields "<name>/dev-<sha>.zip"). Empty means key is just <name>/<sha>.zip. Restricted to [A-Za-z0-9._-]* to keep the prefix in the filename segment.'
     default: ''
   regions:
-    description: 'Comma-separated list of regions to upload to. The first is the primary upload target; the rest are copies. Empty (default) means every region in the credentials'' partition — the prior behavior. Useful for dev workflows that only need the artifact in one or a few regions.'
+    description: 'Comma-separated list of regions to upload to. The first is the primary upload target; the rest are copies. Empty (default) means every region in the credentials'' partition — the prior behavior. Single-partition only; pair with `govcloud: false` (commercial/govcloud regions are disjoint and one list can''t serve both partitions).'
     default: ''
 runs:
   using: "composite"
   steps:
+    - if: ${{ inputs.regions != '' && inputs.govcloud == 'true' }}
+      shell: bash
+      name: Reject incompatible inputs (regions + govcloud)
+      # `regions` is single-partition by design — commercial and govcloud
+      # region pools are disjoint. With govcloud=true the same REGIONS env
+      # flows into both upload steps, so any commercial region triggers an
+      # auth failure on the govcloud step (and vice-versa). Fail fast with
+      # a clear message before AWS sees the misuse.
+      run: |
+        echo "::error::Setting 'regions' with 'govcloud: true' (default) is not supported. Set 'govcloud: false' alongside 'regions'." >&2
+        exit 1
+
     - shell: bash
       name: Zip directory
       id: zip
