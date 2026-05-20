@@ -25,10 +25,10 @@ runs:
         [[ $size -lt $MAX_SIZE ]] || error "The package size is too large: $size; must be smaller than $MAX_SIZE. Consider using docker-based deployment."
 
         TMPNAME=$(mktemp)
-        cd ${{ inputs.path }}
-        zip -r - . > $TMPNAME
+        cd "${{ inputs.path }}"
+        zip -r - . > "$TMPNAME"
 
-        echo "zip-path=$TMPNAME" >> $GITHUB_OUTPUT
+        echo "zip-path=$TMPNAME" >> "$GITHUB_OUTPUT"
     - shell: bash
       name: Compute role name suffix
       id: role-name
