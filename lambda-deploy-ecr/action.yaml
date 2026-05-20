@@ -17,7 +17,7 @@ inputs:
     description: 'Name suffix of the role to assume (defaults to the repo name)'
     default: ''
   tag-prefix:
-    description: 'Prepended to the image tag (e.g. "dev-" tags as "dev-<sha>"). Empty means tag is just <sha>.'
+    description: 'Prepended to the SHA-based tag (e.g. "dev-" yields "dev-<sha>"). Empty means tag is just <sha>.'
     default: ''
 runs:
   using: "composite"
