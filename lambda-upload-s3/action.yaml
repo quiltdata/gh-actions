@@ -33,9 +33,9 @@ runs:
       name: Compute role name suffix
       id: role-name
       run: |
-        NAME=${{ inputs.role_name }}
-        REPO=${GITHUB_REPOSITORY#*/}
-        echo "role-name=$(echo ${NAME:-$REPO})" >> $GITHUB_OUTPUT
+        NAME="${{ inputs.role-name }}"
+        REPO="${GITHUB_REPOSITORY#*/}"
+        echo "role-name=${NAME:-$REPO}" >> "$GITHUB_OUTPUT"
     - name: Configure AWS credentials from Prod account
       uses: aws-actions/configure-aws-credentials@v4
       with:
