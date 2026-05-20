@@ -23,12 +23,12 @@ runs:
         # Direct ${{ }} templating into `run:` is shell-injectable: GHA
         # substitutes before bash parses, so $(...) in the value executes
         # despite quotes. Same pattern applies to other env entries below.
-        ZIP_PATH: ${{ inputs.path }}
+        SRC_PATH: ${{ inputs.path }}
       run: |
         error() { echo "$@" >&2; exit 1; }
         MAX_SIZE=262144000
 
-        cd "$ZIP_PATH"
+        cd "$SRC_PATH"
         size=$(du -b -s . | cut -f 1)
         [[ $size -lt $MAX_SIZE ]] || error "The package size is too large: $size; must be smaller than $MAX_SIZE. Consider using docker-based deployment."
 
