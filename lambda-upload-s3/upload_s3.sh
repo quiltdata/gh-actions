@@ -33,7 +33,6 @@ if [[ -n "$regions_csv" ]]; then
     primary_region="${regions[0]}"
 else
     primary_region=$default_region
-    # shellcheck disable=SC2207
     regions=( $(aws ec2 describe-regions --query "Regions[].{Name:RegionName}" --output text) )
 fi
 
