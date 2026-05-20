@@ -13,9 +13,27 @@ inputs:
   role-name:
     description: 'Name suffix of the role to assume (defaults to the repo name)'
     default: ''
+  version-prefix:
+    description: 'Prepended to the SHA in the S3 key (e.g. "dev-" yields "<name>/dev-<sha>.zip"). Empty means key is just <name>/<sha>.zip. Restricted to [A-Za-z0-9._-]* to keep the prefix in the filename segment.'
+    default: ''
+  regions:
+    description: 'Comma-separated list of regions to upload to. The first is the primary upload target; the rest are copies. Empty (default) means every region in the credentials'' partition — the prior behavior. Single-partition only; pair with `govcloud: false` (commercial/govcloud regions are disjoint and one list can''t serve both partitions).'
+    default: ''
 runs:
   using: "composite"
   steps:
+    - if: ${{ inputs.regions != '' && inputs.govcloud == 'true' }}
+      shell: bash
+      name: Reject incompatible inputs (regions + govcloud)
+      # `regions` is single-partition by design — commercial and govcloud
+      # region pools are disjoint. With govcloud=true the same REGIONS env
+      # flows into both upload steps, so any commercial region triggers an
+      # auth failure on the govcloud step (and vice-versa). Fail fast with
+      # a clear message before AWS sees the misuse.
+      run: |
+        echo "::error::Setting 'regions' with 'govcloud: true' (default) is not supported. Set 'govcloud: false' alongside 'regions'." >&2
+        exit 1
+
     - shell: bash
       name: Zip directory
       id: zip
@@ -51,7 +69,12 @@ runs:
         aws-region: us-east-1
     - shell: bash
       name: Upload zip to prod S3
-      run: ${{ github.action_path }}/upload_s3.sh ${{ steps.zip.outputs.zip-path }} ${{ inputs.name }} ${{ github.sha }} us-east-1
+      env:
+        LAMBDA_NAME: ${{ inputs.name }}
+        VERSION_PREFIX: ${{ inputs.version-prefix }}
+        SHA: ${{ github.sha }}
+        REGIONS: ${{ inputs.regions }}
+      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "$SHA" us-east-1 "$VERSION_PREFIX" "$REGIONS"
     - if: ${{ inputs.govcloud  == 'true' }}
       name: Configure AWS credentials from GovCloud account
       uses: aws-actions/configure-aws-credentials@v4
@@ -61,4 +84,9 @@ runs:
     - if: ${{ inputs.govcloud  == 'true' }}
       shell: bash
       name: Upload zip to GovCloud S3
-      run: ${{ github.action_path }}/upload_s3.sh ${{ steps.zip.outputs.zip-path }} ${{ inputs.name }} ${{ github.sha }} us-gov-east-1
+      env:
+        LAMBDA_NAME: ${{ inputs.name }}
+        VERSION_PREFIX: ${{ inputs.version-prefix }}
+        SHA: ${{ github.sha }}
+        REGIONS: ${{ inputs.regions }}
+      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "$SHA" us-gov-east-1 "$VERSION_PREFIX" "$REGIONS"

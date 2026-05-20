@@ -7,21 +7,41 @@ error() {
     exit 1
 }
 
-[[ $# == 4 ]] || error "Usage: $0 zip_file lambda_name hash region"
+[[ $# -ge 4 && $# -le 6 ]] || error "Usage: $0 zip_file lambda_name hash default_region [version_prefix [regions_csv]]"
 
 zip_file=$1
 lambda_name=$2
 hash=$3
-primary_region=$4
+default_region=$4
+version_prefix=${5:-}
+regions_csv=${6:-}
 
-s3_key="$lambda_name/$hash.zip"
+# Restrict version_prefix to a safe character set so it stays within the
+# filename segment of the S3 key — e.g. `/` would change the effective
+# key path, landing artifacts at `<name>/dev/<sha>.zip` instead of
+# `<name>/dev-<sha>.zip`. `*` (vs `+`) lets the empty default pass.
+if [[ ! "$version_prefix" =~ ^[A-Za-z0-9._-]*$ ]]; then
+    error "version_prefix must match [A-Za-z0-9._-]* (got: '$version_prefix')"
+fi
 
-regions=$(aws ec2 describe-regions --query "Regions[].{Name:RegionName}" --output text)
+# Resolve the region set: explicit comma-separated list, or every region
+# in the credentials' partition (the prior behavior). When the caller
+# specifies regions, the first is the primary upload target; otherwise
+# we fall back to default_region as primary.
+if [[ -n "$regions_csv" ]]; then
+    IFS=',' read -ra regions <<< "$regions_csv"
+    primary_region="${regions[0]}"
+else
+    primary_region=$default_region
+    regions=( $(aws ec2 describe-regions --query "Regions[].{Name:RegionName}" --output text) )
+fi
+
+s3_key="$lambda_name/${version_prefix}${hash}.zip"
 
 echo "Uploading to $primary_region..."
 aws s3 cp --acl public-read "$zip_file" --region "$primary_region" "s3://quilt-lambda-$primary_region/$s3_key"
 
-for region in $regions
+for region in "${regions[@]}"
 do
     if [[ $region != $primary_region ]]
     then
