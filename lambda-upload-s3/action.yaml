@@ -54,7 +54,10 @@ runs:
         aws-region: us-east-1
     - shell: bash
       name: Upload zip to prod S3
-      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "${{ inputs.name }}" "${{ github.sha }}" us-east-1 "${{ inputs.tag-prefix }}"
+      env:
+        LAMBDA_NAME: ${{ inputs.name }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "${{ github.sha }}" us-east-1 "$TAG_PREFIX"
     - if: ${{ inputs.govcloud  == 'true' }}
       name: Configure AWS credentials from GovCloud account
       uses: aws-actions/configure-aws-credentials@v4
@@ -64,4 +67,7 @@ runs:
     - if: ${{ inputs.govcloud  == 'true' }}
       shell: bash
       name: Upload zip to GovCloud S3
-      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "${{ inputs.name }}" "${{ github.sha }}" us-gov-east-1 "${{ inputs.tag-prefix }}"
+      env:
+        LAMBDA_NAME: ${{ inputs.name }}
+        TAG_PREFIX: ${{ inputs.tag-prefix }}
+      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "${{ github.sha }}" us-gov-east-1 "$TAG_PREFIX"
