@@ -19,23 +19,31 @@ runs:
     - shell: bash
       name: Zip directory
       id: zip
+      env:
+        # Direct ${{ }} templating into `run:` is shell-injectable: GHA
+        # substitutes before bash parses, so $(...) in the value executes
+        # despite quotes. Same pattern applies to other env entries below.
+        SRC_PATH: ${{ inputs.path }}
       run: |
+        error() { echo "$@" >&2; exit 1; }
         MAX_SIZE=262144000
+
+        cd "$SRC_PATH"
         size=$(du -b -s . | cut -f 1)
         [[ $size -lt $MAX_SIZE ]] || error "The package size is too large: $size; must be smaller than $MAX_SIZE. Consider using docker-based deployment."
 
         TMPNAME=$(mktemp)
-        cd ${{ inputs.path }}
-        zip -r - . > $TMPNAME
+        zip -r - . > "$TMPNAME"
 
-        echo "zip-path=$TMPNAME" >> $GITHUB_OUTPUT
+        echo "zip-path=$TMPNAME" >> "$GITHUB_OUTPUT"
     - shell: bash
       name: Compute role name suffix
       id: role-name
+      env:
+        ROLE_NAME: ${{ inputs.role-name }}
       run: |
-        NAME=${{ inputs.role_name }}
-        REPO=${GITHUB_REPOSITORY#*/}
-        echo "role-name=$(echo ${NAME:-$REPO})" >> $GITHUB_OUTPUT
+        REPO="${GITHUB_REPOSITORY#*/}"
+        echo "role-name=${ROLE_NAME:-$REPO}" >> "$GITHUB_OUTPUT"
     - name: Configure AWS credentials from Prod account
       uses: aws-actions/configure-aws-credentials@v4
       with:
