@@ -7,14 +7,15 @@ error() {
     exit 1
 }
 
-[[ $# == 4 ]] || error "Usage: $0 zip_file lambda_name hash region"
+[[ $# == 5 ]] || error "Usage: $0 zip_file lambda_name hash region tag_prefix"
 
 zip_file=$1
 lambda_name=$2
 hash=$3
 primary_region=$4
+tag_prefix=$5
 
-s3_key="$lambda_name/$hash.zip"
+s3_key="$lambda_name/${tag_prefix}${hash}.zip"
 
 regions=$(aws ec2 describe-regions --query "Regions[].{Name:RegionName}" --output text)
 
