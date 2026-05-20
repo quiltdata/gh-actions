@@ -19,24 +19,35 @@ runs:
     - shell: bash
       name: Zip directory
       id: zip
+      # Pass caller input via env rather than templating ${{ inputs.path }}
+      # into the script source. GitHub substitutes ${{ }} expressions
+      # *before* bash parses, so quoting alone doesn't protect against a
+      # value containing $(...) or backticks — bash would parse those as
+      # command substitution. Env-var pass-through keeps the value as a
+      # runtime string, not script source.
+      env:
+        ZIP_PATH: ${{ inputs.path }}
       run: |
         error() { echo "$@" >&2; exit 1; }
         MAX_SIZE=262144000
+
+        cd "$ZIP_PATH"
         size=$(du -b -s . | cut -f 1)
         [[ $size -lt $MAX_SIZE ]] || error "The package size is too large: $size; must be smaller than $MAX_SIZE. Consider using docker-based deployment."
 
         TMPNAME=$(mktemp)
-        cd "${{ inputs.path }}"
         zip -r - . > "$TMPNAME"
 
         echo "zip-path=$TMPNAME" >> "$GITHUB_OUTPUT"
     - shell: bash
       name: Compute role name suffix
       id: role-name
+      # Env-var pass-through; see Zip directory step for rationale.
+      env:
+        ROLE_NAME: ${{ inputs.role-name }}
       run: |
-        NAME="${{ inputs.role-name }}"
         REPO="${GITHUB_REPOSITORY#*/}"
-        echo "role-name=${NAME:-$REPO}" >> "$GITHUB_OUTPUT"
+        echo "role-name=${ROLE_NAME:-$REPO}" >> "$GITHUB_OUTPUT"
     - name: Configure AWS credentials from Prod account
       uses: aws-actions/configure-aws-credentials@v4
       with:
