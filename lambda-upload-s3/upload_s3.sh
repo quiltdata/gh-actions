@@ -7,13 +7,13 @@ error() {
     exit 1
 }
 
-[[ $# == 5 ]] || error "Usage: $0 zip_file lambda_name hash region tag_prefix"
+[[ $# == 4 || $# == 5 ]] || error "Usage: $0 zip_file lambda_name hash region [tag_prefix]"
 
 zip_file=$1
 lambda_name=$2
 hash=$3
 primary_region=$4
-tag_prefix=$5
+tag_prefix=${5:-}
 
 s3_key="$lambda_name/${tag_prefix}${hash}.zip"
 
