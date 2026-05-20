@@ -19,13 +19,10 @@ runs:
     - shell: bash
       name: Zip directory
       id: zip
-      # Pass caller input via env rather than templating ${{ inputs.path }}
-      # into the script source. GitHub substitutes ${{ }} expressions
-      # *before* bash parses, so quoting alone doesn't protect against a
-      # value containing $(...) or backticks — bash would parse those as
-      # command substitution. Env-var pass-through keeps the value as a
-      # runtime string, not script source.
       env:
+        # Direct ${{ }} templating into `run:` is shell-injectable: GHA
+        # substitutes before bash parses, so $(...) in the value executes
+        # despite quotes. Same pattern applies to other env entries below.
         ZIP_PATH: ${{ inputs.path }}
       run: |
         error() { echo "$@" >&2; exit 1; }
@@ -42,7 +39,6 @@ runs:
     - shell: bash
       name: Compute role name suffix
       id: role-name
-      # Env-var pass-through; see Zip directory step for rationale.
       env:
         ROLE_NAME: ${{ inputs.role-name }}
       run: |
