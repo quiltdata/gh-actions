@@ -13,8 +13,8 @@ inputs:
   role-name:
     description: 'Name suffix of the role to assume (defaults to the repo name)'
     default: ''
-  tag-prefix:
-    description: 'Prepended to the SHA-based S3 key (e.g. "dev-" yields "dev-<sha>.zip"). Empty means key is just <sha>.zip. Restricted to [A-Za-z0-9._-]* to keep the prefix in the filename segment.'
+  version-prefix:
+    description: 'Prepended to the SHA in the S3 key (e.g. "dev-" yields "<name>/dev-<sha>.zip"). Empty means key is just <name>/<sha>.zip. Restricted to [A-Za-z0-9._-]* to keep the prefix in the filename segment.'
     default: ''
   regions:
     description: 'Comma-separated list of regions to upload to. The first is the primary upload target; the rest are copies. Empty (default) means every region in the credentials'' partition — the prior behavior. Useful for dev workflows that only need the artifact in one or a few regions.'
@@ -59,10 +59,10 @@ runs:
       name: Upload zip to prod S3
       env:
         LAMBDA_NAME: ${{ inputs.name }}
-        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        VERSION_PREFIX: ${{ inputs.version-prefix }}
         SHA: ${{ github.sha }}
         REGIONS: ${{ inputs.regions }}
-      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "$SHA" us-east-1 "$TAG_PREFIX" "$REGIONS"
+      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "$SHA" us-east-1 "$VERSION_PREFIX" "$REGIONS"
     - if: ${{ inputs.govcloud  == 'true' }}
       name: Configure AWS credentials from GovCloud account
       uses: aws-actions/configure-aws-credentials@v4
@@ -74,7 +74,7 @@ runs:
       name: Upload zip to GovCloud S3
       env:
         LAMBDA_NAME: ${{ inputs.name }}
-        TAG_PREFIX: ${{ inputs.tag-prefix }}
+        VERSION_PREFIX: ${{ inputs.version-prefix }}
         SHA: ${{ github.sha }}
         REGIONS: ${{ inputs.regions }}
-      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "$SHA" us-gov-east-1 "$TAG_PREFIX" "$REGIONS"
+      run: ${{ github.action_path }}/upload_s3.sh "${{ steps.zip.outputs.zip-path }}" "$LAMBDA_NAME" "$SHA" us-gov-east-1 "$VERSION_PREFIX" "$REGIONS"
