@@ -15,6 +15,15 @@ hash=$3
 primary_region=$4
 tag_prefix=${5:-}
 
+# Restrict tag_prefix to a safe character set so it stays within the
+# filename segment of the S3 key. Without this, a value containing `/`
+# (or `..`) would change the effective key path, e.g. tag_prefix=`dev/`
+# would land the artifact at `<name>/dev/<sha>.zip` instead of inside
+# the lambda's own prefix. Empty default is allowed.
+if [[ -n "$tag_prefix" && ! "$tag_prefix" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    error "tag_prefix must match [A-Za-z0-9._-]+ (got: '$tag_prefix')"
+fi
+
 s3_key="$lambda_name/${tag_prefix}${hash}.zip"
 
 regions=$(aws ec2 describe-regions --query "Regions[].{Name:RegionName}" --output text)
