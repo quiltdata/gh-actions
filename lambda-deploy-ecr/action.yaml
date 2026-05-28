@@ -30,21 +30,31 @@ runs:
     # sets up a docker-container buildx builder, wires the GHA cache runtime
     # token, and `load: true` puts the built image into the local docker store
     # so the subsequent `docker tag` + `docker push` steps work unchanged.
-    - if: inputs.cache-scope != ''
+    # `use: false` keeps the default docker driver as the active buildx
+    # builder, so a later invocation of this composite in the same job with
+    # an empty cache-scope still gets the bare-`docker buildx build` path
+    # below (which relies on the default driver to land the image in the
+    # local store).
+    - if: ${{ inputs.cache-scope != '' }}
+      id: cached-buildx
       uses: docker/setup-buildx-action@v3
-    - if: inputs.cache-scope != ''
+      with:
+        use: false
+    - if: ${{ inputs.cache-scope != '' }}
       name: Build Docker image (cached)
       uses: docker/build-push-action@v6
       with:
+        builder: ${{ steps.cached-buildx.outputs.name }}
         context: ${{ inputs.docker-context-path }}
         file: ${{ inputs.dockerfile-path }}
         tags: quiltdata/lambdas/${{ inputs.name }}:${{ inputs.version-prefix }}${{ github.sha }}
+        push: false
         load: true
         cache-from: type=gha,scope=${{ inputs.cache-scope }}
         cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope }}
     # No-cache path: byte-identical to the prior behavior (default docker
     # driver, no cache import/export). Selected by an empty cache-scope.
-    - if: inputs.cache-scope == ''
+    - if: ${{ inputs.cache-scope == '' }}
       shell: bash
       name: Build Docker image
       run: docker buildx build -t "quiltdata/lambdas/${{ inputs.name }}:${{ inputs.version-prefix }}${{ github.sha }}" -f "${{ inputs.dockerfile-path }}" "${{ inputs.docker-context-path }}"
