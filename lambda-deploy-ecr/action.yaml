@@ -19,9 +19,9 @@ inputs:
   version-prefix:
     description: 'Prepended to the SHA-based image tag (e.g. "dev-" yields "dev-<sha>"). Empty means tag is just <sha>.'
     default: ''
-  cache-scope:
-    description: 'Empty (default) = no cache, byte-identical prior behavior. Non-empty = opt into GHA buildx layer cache under this scope name; set the same scope in sibling jobs (e.g. a PR-time docker-build-check) to share layers across them. Scope should be a simple identifier — avoid `,` and `=`, which collide with the type=gha,scope=... config syntax.'
-    default: ''
+  registry-cache:
+    description: 'true = cache build layers in ECR (a `:buildcache` tag on this lambda''s Prod repo). Not subject to the GHA 10 GB/repo cache budget, so the heavy dependency layer persists across runs; also shareable with a PR-time docker-build-check that reads the same ref. Requires the Prod role to have ECR pull/push on the repo (it already does, for the image push).'
+    default: 'false'
 runs:
   using: "composite"
   steps:
@@ -34,35 +34,9 @@ runs:
         VERSION_PREFIX: ${{ inputs.version-prefix }}
         SHA: ${{ github.sha }}
       run: echo "image-tag=quiltdata/lambdas/${LAMBDA_NAME}:${VERSION_PREFIX}${SHA}" >> "$GITHUB_OUTPUT"
-    # Cached build path: opt-in via `cache-scope`. `use: false` keeps the
-    # default docker driver as the active buildx builder so a later
-    # invocation of this composite in the same job with an empty cache-scope
-    # still resolves to the bare-buildx path below. `load: true` is required
-    # so the image lands in the local docker store for the per-region
-    # `docker tag` + `docker push` steps that run after AWS creds are set.
-    - if: ${{ inputs.cache-scope != '' }}
-      id: cached-buildx
-      uses: docker/setup-buildx-action@v3
-      with:
-        use: false
-    - if: ${{ inputs.cache-scope != '' }}
-      name: Build Docker image (cached)
-      uses: docker/build-push-action@v6
-      with:
-        builder: ${{ steps.cached-buildx.outputs.name }}
-        context: ${{ inputs.docker-context-path }}
-        file: ${{ inputs.dockerfile-path }}
-        tags: ${{ steps.image-tag.outputs.image-tag }}
-        push: false
-        load: true
-        cache-from: type=gha,scope=${{ inputs.cache-scope }}
-        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope }}
-    - if: ${{ inputs.cache-scope == '' }}
-      shell: bash
-      name: Build Docker image
-      env:
-        IMAGE_TAG: ${{ steps.image-tag.outputs.image-tag }}
-      run: docker buildx build -t "$IMAGE_TAG" -f "${{ inputs.dockerfile-path }}" "${{ inputs.docker-context-path }}"
+    # role-name and the Prod ECR cache ref are computed up front because the
+    # registry-cache build below needs Prod creds + an ECR login *before* the
+    # build (the cache is read/written during the build, not at push time).
     - shell: bash
       name: Compute role name suffix
       id: role-name
@@ -70,6 +44,56 @@ runs:
         NAME="${{ inputs.role-name }}"
         REPO="${GITHUB_REPOSITORY#*/}"
         echo "role-name=${NAME:-$REPO}" >> "$GITHUB_OUTPUT"
+    - if: ${{ inputs.registry-cache == 'true' }}
+      shell: bash
+      name: Compute registry cache ref
+      id: cache-ref
+      env:
+        LAMBDA_NAME: ${{ inputs.name }}
+      # A `:buildcache` tag on the same Prod ECR repo the image is pushed to —
+      # no separate repo to provision. us-east-1 matches the Prod creds region.
+      run: echo "ref=730278974607.dkr.ecr.us-east-1.amazonaws.com/quiltdata/lambdas/${LAMBDA_NAME}:buildcache" >> "$GITHUB_OUTPUT"
+
+    # --- Registry-cache build path (ECR) ---------------------------------------
+    # Needs Prod creds + ECR docker login before the build so buildx can pull
+    # and push the cache manifest. ECR requires the OCI / image-manifest cache
+    # format (it rejects buildkit's default cache manifest).
+    - if: ${{ inputs.registry-cache == 'true' }}
+      name: Configure AWS credentials for cache (Prod)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::730278974607:role/github/GitHub-${{ steps.role-name.outputs.role-name }}
+        aws-region: us-east-1
+    - if: ${{ inputs.registry-cache == 'true' }}
+      name: Log in to Prod ECR (for cache)
+      uses: aws-actions/amazon-ecr-login@v2
+    - if: ${{ inputs.registry-cache == 'true' }}
+      name: Set up buildx for registry-cache build
+      id: registry-buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        use: false
+    - if: ${{ inputs.registry-cache == 'true' }}
+      name: Build Docker image (registry cache)
+      uses: docker/build-push-action@v6
+      with:
+        builder: ${{ steps.registry-buildx.outputs.name }}
+        context: ${{ inputs.docker-context-path }}
+        file: ${{ inputs.dockerfile-path }}
+        tags: ${{ steps.image-tag.outputs.image-tag }}
+        push: false
+        load: true
+        cache-from: type=registry,ref=${{ steps.cache-ref.outputs.ref }},ignore-error=true
+        cache-to: type=registry,ref=${{ steps.cache-ref.outputs.ref }},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+
+    # --- Bare build path (no cache) --------------------------------------------
+    - if: ${{ inputs.registry-cache != 'true' }}
+      shell: bash
+      name: Build Docker image
+      env:
+        IMAGE_TAG: ${{ steps.image-tag.outputs.image-tag }}
+      run: docker buildx build -t "$IMAGE_TAG" -f "${{ inputs.dockerfile-path }}" "${{ inputs.docker-context-path }}"
+
     - name: Configure AWS credentials from Prod account
       uses: aws-actions/configure-aws-credentials@v4
       with:
