@@ -19,11 +19,8 @@ inputs:
   version-prefix:
     description: 'Prepended to the SHA-based image tag (e.g. "dev-" yields "dev-<sha>"). Empty means tag is just <sha>.'
     default: ''
-  cache-scope:
-    description: 'Empty (default) = no cache, byte-identical prior behavior. Non-empty = opt into GHA buildx layer cache under this scope name; set the same scope in sibling jobs (e.g. a PR-time docker-build-check) to share layers across them. Scope should be a simple identifier — avoid `,` and `=`, which collide with the type=gha,scope=... config syntax. Ignored when `registry-cache` is enabled.'
-    default: ''
   registry-cache:
-    description: 'true = cache build layers in ECR (a `:buildcache` tag on this lambda''s Prod repo) instead of the GHA cache. Unlike the GHA cache, this is not subject to the 10 GB/repo budget, so the heavy dependency layer persists across runs; it is also shareable with a PR-time docker-build-check that reads the same ref. Requires the Prod role to have ECR pull/push on the repo (it already does, for the image push).'
+    description: 'true = cache build layers in ECR (a `:buildcache` tag on this lambda''s Prod repo). Not subject to the GHA 10 GB/repo cache budget, so the heavy dependency layer persists across runs; also shareable with a PR-time docker-build-check that reads the same ref. Requires the Prod role to have ECR pull/push on the repo (it already does, for the image push).'
     default: 'false'
 runs:
   using: "composite"
@@ -88,32 +85,8 @@ runs:
         cache-from: type=registry,ref=${{ steps.cache-ref.outputs.ref }}
         cache-to: type=registry,ref=${{ steps.cache-ref.outputs.ref }},mode=max,image-manifest=true,oci-mediatypes=true
 
-    # --- GHA-cache build path --------------------------------------------------
-    # Opt-in via `cache-scope`. `use: false` keeps the default docker driver as
-    # the active buildx builder so a later invocation of this composite in the
-    # same job with an empty cache-scope still resolves to the bare-buildx path
-    # below. `load: true` is required so the image lands in the local docker
-    # store for the per-region `docker tag` + `docker push` steps below.
-    - if: ${{ inputs.registry-cache != 'true' && inputs.cache-scope != '' }}
-      id: cached-buildx
-      uses: docker/setup-buildx-action@v3
-      with:
-        use: false
-    - if: ${{ inputs.registry-cache != 'true' && inputs.cache-scope != '' }}
-      name: Build Docker image (cached)
-      uses: docker/build-push-action@v6
-      with:
-        builder: ${{ steps.cached-buildx.outputs.name }}
-        context: ${{ inputs.docker-context-path }}
-        file: ${{ inputs.dockerfile-path }}
-        tags: ${{ steps.image-tag.outputs.image-tag }}
-        push: false
-        load: true
-        cache-from: type=gha,scope=${{ inputs.cache-scope }}
-        cache-to: type=gha,mode=max,scope=${{ inputs.cache-scope }}
-
-    # --- Bare build path -------------------------------------------------------
-    - if: ${{ inputs.registry-cache != 'true' && inputs.cache-scope == '' }}
+    # --- Bare build path (no cache) --------------------------------------------
+    - if: ${{ inputs.registry-cache != 'true' }}
       shell: bash
       name: Build Docker image
       env:
